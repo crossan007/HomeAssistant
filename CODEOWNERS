@@ -228,6 +228,8 @@ build.json @home-assistant/supervisor
 /homeassistant/components/cups/ @fabaff
 /homeassistant/components/daikin/ @fredrike
 /tests/components/daikin/ @fredrike
+/homeassistant/components/daikinone/ @crossan007
+/tests/components/daikinone/ @crossan007
 /homeassistant/components/darksky/ @fabaff
 /tests/components/darksky/ @fabaff
 /homeassistant/components/debugpy/ @frenck

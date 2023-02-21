@@ -1,0 +1,13 @@
+{
+  "domain": "daikinone",
+  "name": "daikinone",
+  "codeowners": ["@crossan007"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://www.home-assistant.io/integrations/daikinone",
+  "homekit": {},
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "ssdp": [],
+  "zeroconf": []
+}
