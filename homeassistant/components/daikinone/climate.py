@@ -4,6 +4,8 @@ from typing import Any
 
 from charles_dev.daikin_device import DaikinDevice
 from homeassistant.components.climate import (
+    DEFAULT_MAX_TEMP,
+    DEFAULT_MIN_TEMP,
     FAN_AUTO,
     FAN_HIGH,
     FAN_LOW,
@@ -13,10 +15,10 @@ from homeassistant.components.climate import (
     HVACAction,
     HVACMode,
 )
+from homeassistant.components.daikinone.entity import DaikinEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
@@ -28,19 +30,10 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up Daikin device."""
-    cool_away_temp = 80  # entry.options.get(CONF_COOL_AWAY_TEMPERATURE)
-    heat_away_temp = 50  # entry.options.get(CONF_HEAT_AWAY_TEMPERATURE)
-
     data: DaikinData = hass.data[DOMAIN][entry.entry_id]
-
     _LOGGER.debug("Initializing Daikin climate devices: %s", data.client.profile.email)
 
-    async_add_entities(
-        [
-            DaikinNADevice(device, cool_away_temp, heat_away_temp)
-            for device in data.client.devices
-        ]
-    )
+    async_add_entities([DaikinNAClimate(device) for device in data.client.devices])
 
 
 DKN_MODE_TO_HVAC_MODE = {
@@ -53,44 +46,27 @@ DKN_MODE_TO_HVAC_MODE = {
 
 DKN_MODE_TO_FAN_MODE = {0: FAN_AUTO, 2: FAN_LOW, 4: FAN_MEDIUM, 6: FAN_HIGH}
 
+# This enum seems rather limited;  Observed values were always only 2 or 3.
+DKN_MODE_TO_HA_HVAC_ACTION = {
+    3: HVACAction.HEATING,
+    2: HVACAction.COOLING,
+}
 
-class DaikinNADevice(ClimateEntity):
+
+class DaikinNAClimate(DaikinEntity, ClimateEntity):
     """Representation of a DaikinNA Device."""
 
-    _attr_has_entity_name = True
-
-    def __init__(
-        self,
-        device: DaikinDevice,
-        cool_away_temp: int | None,
-        heat_away_temp: int | None,
-    ) -> None:
-        self._device = device
-        self._cool_away_temp = cool_away_temp
-        self._heat_away_temp = heat_away_temp
-        self._away = False
-
-        self._attr_unique_id = device.mac
-
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, device.mac)},
-            name=device.name,
-            manufacturer="Daikin",
-        )
-
+    def __init__(self, device: DaikinDevice) -> None:
+        super().__init__(device)
         self._attr_hvac_modes = list(DKN_MODE_TO_HVAC_MODE.values())
         self._attr_hvac_modes.append(HVACMode.OFF)
-
-        self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
         _LOGGER.debug(
-            "Created DaikinNADevice '%s':'%s'", self._device.mac, self._device.name
+            "Created DaikinNAClimate '%s':'%s'", self._device.mac, self._device.name
         )
 
         self._attr_supported_features = (
             ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.FAN_MODE
         )
-
-        device.set_update_callback(self.on_data_updated)
 
     def _hvac_mode_to_dkn_mode(self, hvac_mode: HVACMode) -> int:
         return list(DKN_MODE_TO_HVAC_MODE.keys())[
@@ -102,17 +78,17 @@ class DaikinNADevice(ClimateEntity):
             list(DKN_MODE_TO_FAN_MODE.values()).index(fan_mode)
         ]
 
-    def on_data_updated(self):
-        """Callback from the DaikinDevice class when the data model changes."""
-        _LOGGER.debug("Device Data updated:")
-        self._attr_device_info["model"] = self._device.device_data.manufacturer.text
-        self._attr_device_info["name"] = self._device.device_data.name
-        self.schedule_update_ha_state(True)
-
     @property
     def name(self):
         """Name of the entity."""
         return self._device.name
+
+    @property
+    def temperature_unit(self) -> str:
+        if self._device.device_data.units == 1:
+            return UnitOfTemperature.FAHRENHEIT
+        else:
+            return self._device.device_data.units == UnitOfTemperature.CELSIUS
 
     @property
     def hvac_action(self) -> HVACAction | None:
@@ -120,7 +96,7 @@ class DaikinNADevice(ClimateEntity):
         if self._device.device_data.power is False:
             return HVACMode.OFF
         else:
-            return DKN_MODE_TO_HVAC_MODE.get(self._device.device_data.real_mode)
+            return DKN_MODE_TO_HA_HVAC_ACTION[self._device.device_data.real_mode]
 
     @property
     def hvac_mode(self) -> HVACMode:
@@ -147,6 +123,28 @@ class DaikinNADevice(ClimateEntity):
         return None
 
     @property
+    def max_temp(self) -> float:
+        """Return the maximum temperature."""
+        if self.hvac_mode == HVACMode.COOL:
+            return self._device.device_data.range_sp_cool_air_max
+        if self.hvac_mode == HVACMode.HEAT:
+            return self._device.device_data.range_sp_hot_air_max
+        if self.hvac_mode == HVACMode.HEAT_COOL:
+            return self._device.device_data.range_sp_auto_air_max
+        return DEFAULT_MAX_TEMP
+
+    @property
+    def min_temp(self) -> float:
+        """Return the minimum temperature."""
+        if self.hvac_mode == HVACMode.COOL:
+            return self._device.device_data.range_sp_cool_air_min
+        if self.hvac_mode == HVACMode.HEAT:
+            return self._device.device_data.range_sp_hot_air_min
+        if self.hvac_mode == HVACMode.HEAT_COOL:
+            return self._device.device_data.range_sp_auto_air_min
+        return DEFAULT_MIN_TEMP
+
+    @property
     def fan_mode(self) -> str:
         return DKN_MODE_TO_FAN_MODE[self._device.device_data.speed_state]
 
@@ -163,6 +161,7 @@ class DaikinNADevice(ClimateEntity):
 
     @property
     def sw_version(self) -> str:
+        """Gets the device firmware version."""
         return self._device.device_data.version
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
@@ -175,7 +174,7 @@ class DaikinNADevice(ClimateEntity):
             )
         if new_power_state != current_power_state:
             await self._device.set_device_value("power", new_power_state)
-            self.schedule_update_ha_state()
+        self.async_schedule_update_ha_state()
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         """Set new target fan mode."""
